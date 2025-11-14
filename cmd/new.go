@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morales0/lazy-clockify/clockify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -21,6 +23,7 @@ func parseHourMinute(s string) (hour, min int, err error) {
 	return
 }
 
+// getGitBranch returns the current git branch name, or an error if not in a git repo
 func getGitBranch() (string, error) {
 	cmd := exec.Command("git", "branch", "--show-current")
 	output, err := cmd.Output()
@@ -30,6 +33,8 @@ func getGitBranch() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// extractTicketNumber extracts a ticket number from a branch name based on the prefix
+// e.g. "feature/EL-1234-some-description" with prefix "EL" returns "EL-1234"
 func extractTicketNumber(branchName, prefix string) string {
 	// Create regex pattern: prefix followed by dash and digits
 	// e.g. EL-\d+
@@ -39,6 +44,7 @@ func extractTicketNumber(branchName, prefix string) string {
 	return match
 }
 
+// getTicketNumber tries to get ticket number from git branch, or prompts user
 func getTicketNumber() (string, error) {
 	prefix := viper.GetString("ticket_prefix")
 
@@ -71,12 +77,28 @@ func getTicketNumber() (string, error) {
 	return ticket, nil
 }
 
+// formatDuration formats a duration in a human-readable format
+func formatDuration(d time.Duration) string {
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
+
 // newCmd represents the new command
 var newCmd = &cobra.Command{
 	Use:   "new",
 	Short: "Create a new time entry",
 	Long:  `Add a new time entry to Clockify using configuration for start, end, date, and message.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Get API key from config
+		apiKey := viper.GetString("api_key")
+		if apiKey == "" {
+			return fmt.Errorf("api_key not found in configuration. Please set it in your config file or use --api_key flag")
+		}
+
 		// Get start and end time
 		startTimeStr := viper.GetString("start_time")
 		endTimeStr := viper.GetString("end_time")
@@ -97,13 +119,97 @@ var newCmd = &cobra.Command{
 		// Get ticket number
 		ticketNumber, err := getTicketNumber()
 		if err != nil {
-			return fmt.Errorf("Failed to get ticket number: %w", err)
+			return fmt.Errorf("failed to get ticket number: %w", err)
 		}
 
-		fmt.Printf("Creating a new time entry from %s to %s for ticket %s\n",
-			startTime.Local().Format("03:04 PM"),
-			endTime.Local().Format("03:04 PM"),
-			ticketNumber)
+		// Create Clockify client
+		client := clockify.NewClient(apiKey)
+
+		// Get user info to retrieve default workspace
+		fmt.Println("Fetching user information...")
+		user, err := client.GetUser()
+		if err != nil {
+			return fmt.Errorf("failed to get user info: %w", err)
+		}
+
+		workspaceID := user.DefaultWorkspace
+		if workspaceID == "" {
+			// Fallback: get the first workspace
+			fmt.Println("No default workspace found, fetching workspaces...")
+			workspaces, err := client.GetWorkspaces()
+			if err != nil {
+				return fmt.Errorf("failed to get workspaces: %w", err)
+			}
+			if len(workspaces) == 0 {
+				return fmt.Errorf("no workspaces found for this user")
+			}
+			workspaceID = workspaces[0].ID
+			fmt.Printf("Using workspace: %s\n", workspaces[0].Name)
+		}
+
+		// Create time entry
+		description := ticketNumber
+		entryRequest := clockify.TimeEntryRequest{
+			Start:       startTime.UTC(),
+			End:         &endTime,
+			Description: description,
+			Billable:    true,
+		}
+
+		// Display the request details
+		fmt.Println("\n" + strings.Repeat("=", 60))
+		fmt.Println("Time Entry Details")
+		fmt.Println(strings.Repeat("=", 60))
+		fmt.Printf("Workspace ID:  %s\n", workspaceID)
+		fmt.Printf("User:          %s (%s)\n", user.Name, user.Email)
+		fmt.Printf("Ticket:        %s\n", ticketNumber)
+		fmt.Printf("Description:   %s\n", description)
+		fmt.Printf("Start Time:    %s (Local) / %s (UTC)\n",
+			startTime.Local().Format("2006-01-02 03:04:05 PM MST"),
+			startTime.UTC().Format("2006-01-02 15:04:05 UTC"))
+		fmt.Printf("End Time:      %s (Local) / %s (UTC)\n",
+			endTime.Local().Format("2006-01-02 03:04:05 PM MST"),
+			endTime.UTC().Format("2006-01-02 15:04:05 UTC"))
+		duration := endTime.Sub(startTime)
+		fmt.Printf("Duration:      %s (%.2f hours)\n",
+			formatDuration(duration),
+			duration.Hours())
+		fmt.Printf("Billable:      %t\n", entryRequest.Billable)
+		fmt.Println(strings.Repeat("=", 60))
+
+		// Show JSON payload
+		fmt.Println("\nAPI Request Payload:")
+		jsonPayload, err := json.MarshalIndent(entryRequest, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal request: %w", err)
+		}
+		fmt.Println(string(jsonPayload))
+		fmt.Printf("\nAPI Endpoint: POST https://api.clockify.me/api/v1/workspaces/%s/time-entries\n", workspaceID)
+		fmt.Println(strings.Repeat("=", 60))
+
+		// Prompt for confirmation
+		fmt.Print("\nDo you want to submit this time entry? (yes/no): ")
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read confirmation: %w", err)
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response != "yes" && response != "y" {
+			fmt.Println("Time entry cancelled.")
+			return nil
+		}
+
+		// Submit the time entry
+		fmt.Println("\nSubmitting time entry...")
+		timeEntry, err := client.CreateTimeEntry(workspaceID, entryRequest)
+		if err != nil {
+			return fmt.Errorf("failed to create time entry: %w", err)
+		}
+
+		fmt.Printf("\n✓ Time entry created successfully!\n")
+		fmt.Printf("  Entry ID: %s\n", timeEntry.ID)
 		return nil
 	},
 }
@@ -112,7 +218,15 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 	newCmd.Flags().String("start_time", "9:00", "Start time")
 	newCmd.Flags().String("end_time", "17:00", "End time")
-	newCmd.Flags().String("ticket_prefix", "JIRA", "Ticket Prefix")
+	newCmd.Flags().String("ticket_prefix", "JIRA", "Prefix for git branch ticket numbers (e.g. EL for EL-1234)")
+	// newCmd.Flags().String("message", "", "Optional message to append to the time entry description")
+	// newCmd.Flags().String("api_key", "", "Clockify API key")
+
+	// viper.BindPFlag("start_time", newCmd.Flags().Lookup("start_time"))
+	// viper.BindPFlag("end_time", newCmd.Flags().Lookup("end_time"))
+	// viper.BindPFlag("git_ticket_prefix", newCmd.Flags().Lookup("git_ticket_prefix"))
+	// viper.BindPFlag("message", newCmd.Flags().Lookup("message"))
+	// viper.BindPFlag("api_key", newCmd.Flags().Lookup("api_key"))
 
 	// Here you will define your flags and configuration settings.
 
