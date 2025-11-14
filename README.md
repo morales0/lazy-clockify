@@ -49,7 +49,7 @@ You can get your API key from your Clockify profile settings.
 Basic usage (uses today's date and configured times):
 
 ```bash
-lazy-clockify new
+lazyclock new
 ```
 
 The tool will:
@@ -63,8 +63,8 @@ The tool will:
 Add a custom message to your time entry (replaced ticket number):
 
 ```bash
-lazy-clockify new -m "Implemented user authentication"
-lazy-clockify new --message "Fixed bug in payment processing"
+lazyclock new -m "Implemented user authentication"
+lazyclock new --message "Fixed bug in payment processing"
 ```
 
 ### Different Date
@@ -72,8 +72,8 @@ lazy-clockify new --message "Fixed bug in payment processing"
 Log time for a different date:
 
 ```bash
-lazy-clockify new -d 2025-01-15
-lazy-clockify new --date 2025-01-15
+lazyclock new -d 2025-01-15
+lazyclock new --date 2025-01-15
 ```
 
 ## Git Branch Integration
@@ -91,7 +91,7 @@ For example, with `ticket_prefix: "EL"`:
 Create a new time entry:
 
 ```bash
-lazy-clockify new [flags]
+lazyclock new [flags]
 ```
 
 **Flags:**
