@@ -114,13 +114,42 @@ var newCmd = &cobra.Command{
 		}
 
 		now := time.Now()
-		startTime := time.Date(now.Year(), now.Month(), now.Day(), startHour, startMin, 0, 0, now.Location())
-		endTime := time.Date(now.Year(), now.Month(), now.Day(), endHour, endMin, 0, 0, now.Location())
+		date := viper.GetString("date")
+		var month time.Month
+		var day, year int
 
-		// Get ticket number
-		ticketNumber, err := getTicketNumber()
-		if err != nil {
-			return fmt.Errorf("failed to get ticket number: %w", err)
+		if date == "" {
+			month = now.Month()
+			day = now.Day()
+			year = now.Year()
+		} else {
+			parsedDate, err := time.Parse("2006-01-02", date)
+
+			if err != nil {
+				return fmt.Errorf("invalid date: %w; YYYY-MM-DD", err)
+			}
+
+			month = parsedDate.Month()
+			day = parsedDate.Day()
+			year = parsedDate.Year()
+
+		}
+
+		startTime := time.Date(year, month, day, startHour, startMin, 0, 0, now.Location())
+		endTime := time.Date(year, month, day, endHour, endMin, 0, 0, now.Location())
+
+		// Get description
+		var description string
+		customMessage := viper.GetString("message")
+
+		if customMessage == "" {
+			ticketNumber, err := getTicketNumber()
+			if err != nil {
+				return fmt.Errorf("failed to get ticket number: %w", err)
+			}
+			description = ticketNumber
+		} else {
+			description = customMessage
 		}
 
 		// Create Clockify client
@@ -188,8 +217,6 @@ var newCmd = &cobra.Command{
 
 		fmt.Printf("\n✓ Selected project: %s\n", selectedProject.Name)
 
-		// Create time entry
-		description := ticketNumber
 		entryRequest := clockify.TimeEntryRequest{
 			Start:       startTime.UTC(),
 			End:         &endTime,
@@ -205,7 +232,6 @@ var newCmd = &cobra.Command{
 		fmt.Printf("Workspace ID:  %s\n", workspaceID)
 		fmt.Printf("Project Name:  %s\n", selectedProject.Name)
 		fmt.Printf("User:          %s (%s)\n", user.Name, user.Email)
-		fmt.Printf("Ticket:        %s\n", ticketNumber)
 		fmt.Printf("Description:   %s\n", description)
 		fmt.Printf("Start Time:    %s (Local) / %s (UTC)\n",
 			startTime.Local().Format("2006-01-02 03:04:05 PM MST"),
@@ -261,6 +287,8 @@ func init() {
 	newCmd.Flags().String("start_time", "9:00", "Start time")
 	newCmd.Flags().String("end_time", "17:00", "End time")
 	newCmd.Flags().String("ticket_prefix", "JIRA", "Prefix for git branch ticket numbers (e.g. EL for EL-1234)")
+	newCmd.Flags().StringP("message", "m", "", "Entry description")
+	newCmd.Flags().StringP("date", "d", "", "Date to log to")
 	// newCmd.Flags().String("message", "", "Optional message to append to the time entry description")
 	// newCmd.Flags().String("api_key", "", "Clockify API key")
 
