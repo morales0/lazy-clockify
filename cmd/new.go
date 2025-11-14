@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,6 +148,46 @@ var newCmd = &cobra.Command{
 			fmt.Printf("Using workspace: %s\n", workspaces[0].Name)
 		}
 
+		// Get project id from workspace
+		projects, err := client.GetProjects(workspaceID)
+		if err != nil {
+			return fmt.Errorf("failed to get projects: %w", err)
+		}
+		if len(projects) == 0 {
+			return fmt.Errorf("no projects found for this user")
+		}
+
+		// Display projects
+		fmt.Println("\nAvailable Projects:")
+		fmt.Println(strings.Repeat("=", 60))
+		for i, proj := range projects {
+			fmt.Printf("%d. %s (ID: %s)\n", i+1, proj.Name, proj.ID)
+		}
+		fmt.Println(strings.Repeat("=", 60))
+
+		// Prompt for project selection
+		var selectedProject *clockify.Project
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			fmt.Printf("\nSelect a default project (1-%d): ", len(projects))
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("failed to read input: %w", err)
+			}
+
+			input = strings.TrimSpace(input)
+			choice, err := strconv.Atoi(input)
+			if err != nil || choice < 1 || choice > len(projects) {
+				fmt.Printf("Invalid choice. Please enter a number between 1 and %d.\n", len(projects))
+				continue
+			}
+
+			selectedProject = &projects[choice-1]
+			break
+		}
+
+		fmt.Printf("\n✓ Selected project: %s\n", selectedProject.Name)
+
 		// Create time entry
 		description := ticketNumber
 		entryRequest := clockify.TimeEntryRequest{
@@ -154,6 +195,7 @@ var newCmd = &cobra.Command{
 			End:         &endTime,
 			Description: description,
 			Billable:    true,
+			ProjectID:   &selectedProject.ID,
 		}
 
 		// Display the request details
@@ -161,6 +203,7 @@ var newCmd = &cobra.Command{
 		fmt.Println("Time Entry Details")
 		fmt.Println(strings.Repeat("=", 60))
 		fmt.Printf("Workspace ID:  %s\n", workspaceID)
+		fmt.Printf("Project Name:  %s\n", selectedProject.Name)
 		fmt.Printf("User:          %s (%s)\n", user.Name, user.Email)
 		fmt.Printf("Ticket:        %s\n", ticketNumber)
 		fmt.Printf("Description:   %s\n", description)
@@ -189,7 +232,6 @@ var newCmd = &cobra.Command{
 
 		// Prompt for confirmation
 		fmt.Print("\nDo you want to submit this time entry? (yes/no): ")
-		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read confirmation: %w", err)
