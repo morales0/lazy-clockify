@@ -13,7 +13,7 @@ A command-line utility to quickly create time entries in Clockify from your term
 ## Installation
 
 ```bash
-go install github.com/morales0/lazy-clockify@latest
+go install github.com/morales0/lazy-clockify/lazyclock@latest
 ```
 
 Or build from source:
@@ -21,7 +21,7 @@ Or build from source:
 ```bash
 git clone https://github.com/morales0/lazy-clockify.git
 cd lazy-clockify
-go build
+go build -o lazyclock
 ```
 
 ## Configuration
