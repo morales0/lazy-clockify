@@ -46,7 +46,7 @@ func extractTicketNumber(branchName, prefix string) string {
 }
 
 // getTicketNumber tries to get ticket number from git branch, or prompts user
-func getTicketNumber() (string, error) {
+func getTicketNumber(skipPrompt bool) (string, error) {
 	prefix := viper.GetString("ticket_prefix")
 
 	// Try to get ticket from git branch
@@ -60,6 +60,10 @@ func getTicketNumber() (string, error) {
 		fmt.Printf("No ticket number found in branch: %s\n", branchName)
 	} else {
 		fmt.Println("Not in a git repository or no branch detected")
+	}
+
+	if skipPrompt {
+		return "No ticket", nil
 	}
 
 	// Prompt user for ticket number
@@ -94,6 +98,7 @@ var newCmd = &cobra.Command{
 	Short: "Create a new time entry",
 	Long:  `Add a new time entry to Clockify using configuration for start, end, date, and message.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		skipFlag, _ := cmd.Flags().GetBool("yes")
 		// Get API key from config
 		apiKey := viper.GetString("api_key")
 		if apiKey == "" {
@@ -143,7 +148,7 @@ var newCmd = &cobra.Command{
 		customMessage := viper.GetString("message")
 
 		if customMessage == "" {
-			ticketNumber, err := getTicketNumber()
+			ticketNumber, err := getTicketNumber(skipFlag)
 			if err != nil {
 				return fmt.Errorf("failed to get ticket number: %w", err)
 			}
@@ -197,22 +202,30 @@ var newCmd = &cobra.Command{
 		// Prompt for project selection
 		var selectedProject *clockify.Project
 		reader := bufio.NewReader(os.Stdin)
-		for {
-			fmt.Printf("\nSelect a default project (1-%d): ", len(projects))
-			input, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("failed to read input: %w", err)
+		if skipFlag {
+			projectIndex := viper.GetInt("project") - 1
+			if projectIndex >= len(projects) || projectIndex < 0 {
+				return fmt.Errorf("invalid project value: %d", projectIndex+1)
 			}
+			selectedProject = &projects[projectIndex]
+		} else {
+			for {
+				fmt.Printf("\nSelect a default project (1-%d): ", len(projects))
+				input, err := reader.ReadString('\n')
+				if err != nil {
+					return fmt.Errorf("failed to read input: %w", err)
+				}
 
-			input = strings.TrimSpace(input)
-			choice, err := strconv.Atoi(input)
-			if err != nil || choice < 1 || choice > len(projects) {
-				fmt.Printf("Invalid choice. Please enter a number between 1 and %d.\n", len(projects))
-				continue
+				input = strings.TrimSpace(input)
+				choice, err := strconv.Atoi(input)
+				if err != nil || choice < 1 || choice > len(projects) {
+					fmt.Printf("Invalid choice. Please enter a number between 1 and %d.\n", len(projects))
+					continue
+				}
+
+				selectedProject = &projects[choice-1]
+				break
 			}
-
-			selectedProject = &projects[choice-1]
-			break
 		}
 
 		fmt.Printf("\n✓ Selected project: %s\n", selectedProject.Name)
@@ -257,16 +270,18 @@ var newCmd = &cobra.Command{
 		fmt.Println(strings.Repeat("=", 60))
 
 		// Prompt for confirmation
-		fmt.Print("\nDo you want to submit this time entry? (yes/no): ")
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read confirmation: %w", err)
-		}
+		if !skipFlag {
+			fmt.Print("\nDo you want to submit this time entry? (yes/no): ")
+			response, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("failed to read confirmation: %w", err)
+			}
 
-		response = strings.ToLower(strings.TrimSpace(response))
-		if response != "yes" && response != "y" {
-			fmt.Println("Time entry cancelled.")
-			return nil
+			response = strings.ToLower(strings.TrimSpace(response))
+			if response != "yes" && response != "y" {
+				fmt.Println("Time entry cancelled.")
+				return nil
+			}
 		}
 
 		// Submit the time entry
@@ -288,23 +303,7 @@ func init() {
 	newCmd.Flags().String("end_time", "17:00", "End time")
 	newCmd.Flags().String("ticket_prefix", "JIRA", "Prefix for git branch ticket numbers (e.g. EL for EL-1234)")
 	newCmd.Flags().StringP("message", "m", "", "Entry description")
+	newCmd.Flags().IntP("project", "p", 1, "Project to use for time entry; 1-indexed")
 	newCmd.Flags().StringP("date", "d", "", "Date to log to")
-	// newCmd.Flags().String("message", "", "Optional message to append to the time entry description")
-	// newCmd.Flags().String("api_key", "", "Clockify API key")
-
-	// viper.BindPFlag("start_time", newCmd.Flags().Lookup("start_time"))
-	// viper.BindPFlag("end_time", newCmd.Flags().Lookup("end_time"))
-	// viper.BindPFlag("git_ticket_prefix", newCmd.Flags().Lookup("git_ticket_prefix"))
-	// viper.BindPFlag("message", newCmd.Flags().Lookup("message"))
-	// viper.BindPFlag("api_key", newCmd.Flags().Lookup("api_key"))
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// newCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// newCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	newCmd.Flags().BoolP("yes", "y", false, "Skip confirmations")
 }
